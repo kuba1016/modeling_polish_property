@@ -1,0 +1,421 @@
+---
+title: "New homes in Poland - modeling"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+Loading the libraries
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(scales)
+```
+
+Loading the raw data 
+```{r}
+homes_raw <- read_csv("data/new_homes_clean.csv")
+```
+Checking data 
+```{r}
+skimr::skim(homes_raw)
+```
+
+Decided to delete all rows with NA and trim data a bit. 
+```{r}
+homes <- homes_raw %>%
+  filter(m2 <400,
+         price>100000,
+         price<4000000,
+         rooms >2,
+         rooms<8,
+         plot_m2<2000,) %>% 
+  drop_na() %>% 
+  select(-url) %>% mutate_if(is.character, factor)
+```
+
+Adding extra data - list of polish cities. 
+```{r}
+polish_cities <- maps::world.cities %>% filter(country.etc == "Poland") %>% 
+  mutate(name = case_when(name =="Cracow" ~ "Krakow",
+                          name =="Warsaw" ~ "Warszawa",
+                          TRUE ~ name)
+         )
+```
+
+```{r}
+homes_df <- homes %>% 
+  mutate(town_vilage = iconv(town_vilage, from = 'UTF-8', to = 'ASCII//TRANSLIT')) %>%
+  mutate(town_vilage = str_remove_all(town_vilage, "'")) %>% 
+  rename(name=town_vilage ) %>% 
+  left_join(polish_cities) 
+```
+
+
+```{r}
+homes_df <- homes_df %>%
+               mutate(
+                 size = case_when(
+                   pop < 20000 ~ "small_town",
+                   20000 < pop &&
+                     pop < 100000 ~ "medium_town",
+                   pop > 100000 ~ "big_town",
+                   TRUE ~ "village"
+                 )
+              ) %>%
+              mutate(capital = case_when(capital == 1 ~ TRUE,
+                                         TRUE ~ FALSE),
+                     rooms = factor(rooms)) %>%
+              select(price, rooms, m2, voivodeship, plot_m2, size) %>%
+              mutate_if(is.character, factor) %>%
+              
+              drop_na()
+```
+
+Data exploration
+Plot 1 - boxplots of prices/voivodeship
+```{r}
+homes_df %>%
+  mutate(voivodeship = fct_reorder(voivodeship, price)) %>%
+  ggplot(aes(price , color = voivodeship)) +
+  geom_boxplot(show.legend = FALSE) +
+  scale_x_log10(labels = scales::label_number(prefix = "PLN ")) +
+  scale_y_continuous(labels = NULL) +
+  theme_minimal() +
+  labs(title = "Price distributions by voivodeship.",
+       x = "Price")
+
+
+```
+Plot 2 - Boxplot prices/rooms
+
+```{r}
+homes_df %>%
+  
+  mutate(voivodeship = fct_reorder(voivodeship, price),
+         rooms = as.factor(rooms)) %>%
+  ggplot(aes(price, color = rooms)) +
+  geom_boxplot(show.legend = TRUE, outlier.alpha = .3) +
+  scale_x_log10(labels = dollar_format(prefix = "PLN")) +
+  scale_y_continuous(labels = NULL) +
+  theme_minimal() +
+  labs(title = "Price distributions by amount of rooms.",
+       x = "Price",
+       color = "No. of rooms")
+ 
+```
+
+Plot 3 plot_m2
+
+```{r}
+homes_df %>%
+  mutate(voivodeship = fct_reorder(voivodeship, plot_m2)) %>%
+  ggplot(aes(plot_m2, color = voivodeship)) +
+  geom_boxplot(show.legend = FALSE, outlier.alpha = 0.3) +
+  scale_y_continuous(labels = NULL) +
+  scale_x_log10()+
+  theme_minimal() +
+  labs(title = "Plot size  distributions by voivodeship .",
+       x = "Plot size (m2).")
+  
+```
+
+
+Plot 4 -price vs plot_m2 - not correlation (no enought) can be observed. 
+
+```{r}
+homes_df %>%
+  mutate(voivodeship = fct_reorder(voivodeship, plot_m2)) %>%
+  ggplot(aes(plot_m2, price, color = voivodeship)) +
+  geom_point(show.legend = FALSE, alpha = .5) +
+  facet_wrap( ~ voivodeship) +
+  geom_smooth(
+    lty = 2,
+    method = "lm",
+    formula = y ~ x ,
+    color = "black"
+  ) +
+  scale_y_log10(labels = dollar_format(prefix = "PLN ")) +
+  theme_minimal() +
+  labs(title = "Plot size vs price  by voivodeship .",
+       x = "Plot size (m2).",
+       y = "Price.")
+
+```
+
+Plot 5 -price vs m2 -  correlation  can be observed. 
+```{r}
+homes_df %>%
+  mutate(voivodeship = fct_reorder(voivodeship, plot_m2)) %>%
+  ggplot(aes(m2, price, color = voivodeship)) +
+  geom_point(show.legend = FALSE, alpha = .5) +
+  facet_wrap( ~ voivodeship) +
+  geom_smooth(
+    lty = 2,
+    method = "lm",
+    formula = y ~ x ,
+    color = "black"
+  ) +
+  scale_y_log10(labels = dollar_format(prefix = "PLN ")) +
+  theme_minimal() +
+  labs(title = "Property size (m2) vs price  by voivodeship .",
+       x = "Property size (m2).",
+       y = "Price.")
+```
+Plot 6 - density price facet by size 
+```{r}
+homes_df %>%
+  mutate(voivodeship = fct_reorder(voivodeship, plot_m2)) %>%
+  ggplot(aes(price, color = size, fill = size)) +
+  geom_histogram(show.legend = FALSE, alpha = .5) +
+  scale_x_log10(labels = dollar_format(prefix = "PLN "), n.breaks = 10) +
+  scale_y_continuous(labels = number_format()) +
+  facet_wrap( ~ size, ncol = 1) +
+  theme_minimal() +
+  labs(title = "Prize distributions  by size of the city .",
+       x = "Price.",
+       y = "No. of properties.")
+```
+Plot 7 - density price facet by number of rooms 
+
+```{r}
+homes_df %>%
+  mutate(voivodeship = fct_reorder(voivodeship, plot_m2)) %>%
+  ggplot(aes(price, color = rooms, fill = rooms)) +
+  geom_density(show.legend = FALSE, alpha = .5) +
+  scale_x_log10(labels = dollar_format(prefix = "PLN "), n.breaks = 10) +
+  scale_y_continuous(labels = number_format()) +
+  facet_wrap( ~ rooms, ncol = 1) +
+  theme_minimal() +
+  labs(title = "Prize distributions  by no. of rooms .",
+       x = "Price.",
+       y = "Proportion of properties.")
+```
+
+Building model simple linear regression model. 
+```{r}
+# Initial split. stratifying by voivodeship.
+
+homes_split <- initial_split(homes_df, strata = voivodeship)
+homes_training <- training(homes_split)
+homes_testing <- testing(homes_split)
+```
+
+Data resampling for tuning thw model. 
+```{r}
+#Stratifying by voivodeship with 25 folds.
+folds_lm <- vfold_cv(homes_training, strata = voivodeship,v = 25)
+```
+
+
+Data pre processing 
+```{r}
+homes_lm_rec <- recipe(price ~ . , data = homes_training) %>%
+  step_corr(all_numeric()) %>%
+  step_dummy(all_nominal()) %>%
+  step_zv(all_numeric()) %>%
+  step_normalize(all_numeric()) %>%
+  step_ns(m2, deg_free = tune("no_splines"))
+
+```
+
+Setting model lm
+```{r}
+#Linear reg
+lm_spec <- linear_reg() %>%
+  set_engine("lm")
+```
+
+```{r}
+lm_fit <- lm_spec %>% 
+  fit(price ~.,
+      data = homes_training)
+```
+
+```{r}
+lm_results_train <- lm_fit %>% predict(homes_training) %>% 
+  mutate(truth = homes_training$price) %>% rsq(truth, .pred) %>% 
+  bind_rows( lm_fit %>% predict(homes_training) %>% 
+  mutate(truth = homes_training$price) %>% rmse(truth, .pred))
+lm_results_test <- lm_fit %>% predict(homes_testing) %>% 
+  mutate(truth = homes_testing$price) %>% rsq(truth, .pred) %>% 
+  bind_rows( lm_fit %>% predict(homes_testing) %>% 
+  mutate(truth = homes_testing$price) %>% rmse(truth, .pred))
+
+lm_results_train
+lm_results_test
+# LM model performs poorly. Explains lest than 50% of the data. 
+# It would be good idea to try something different. 
+```
+
+Extra validation of lm model.
+```{r}
+lm_validation_results <- fit_resamples(
+  price ~.,
+  lm_spec,
+  folds_lm,
+  metrics = metric_set(rmse,rsq)
+)
+lm_validation_results %>% collect_metrics()
+# Confirmation that  lm  model performs in similar way on resamples.  
+```
+
+```{r}
+```
+
+
+Randpm forrest model. 
+
+```{r}
+# Recipe
+homes_rand_rec <- recipe(price ~ . , data = homes_training) %>%
+  step_corr(all_numeric()) %>%
+  step_dummy(all_nominal()) %>%
+  step_zv(all_numeric()) %>%
+  step_normalize(all_numeric()) 
+```
+```{r}
+# Random forest specs
+rand_forest_spec <-
+  rand_forest(mtry = tune(),
+              trees = tune(),
+              min_n = tune()) %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
+```
+
+```{r}
+#Setting up workflow for random forest.
+homes_rand_wf <- workflow() %>%
+  add_recipe(homes_rand_rec) %>%
+  add_model(rand_forest_spec)
+```
+Train hyperparametrs for random forest.
+```{r}
+# 25 folds for tuning random forest model.
+rand_folds <- vfold_cv(homes_training, v = 25)
+```
+
+```{r}
+#Setting up parallel computing.
+doParallel::registerDoParallel()
+# Tuning model
+homes_rand_results <- tune_grid(homes_rand_wf,
+                                rand_folds,
+                                grid = 20,
+                                control = control_grid(save_pred = TRUE))
+```
+
+Checking results
+```{r}
+# Checking results 
+homes_rand_results %>% collect_metrics()
+homes_rand_results %>% autoplot()
+homes_rand_results %>% select_best(metric = "rsq")
+best_rmse <- homes_rand_results %>% select_best(metric = "rmse")
+```
+Final model 
+```{r}
+final_random_forest <- finalize_model(rand_forest_spec,
+                                      best_rmse)
+```
+
+```{r}
+
+final_fit <- final_random_forest %>%
+  set_engine("ranger", importance = "permutation") %>%
+  fit(price ~ ., homes_training) 
+```
+
+```{r}
+library(vip)
+
+# Variables importance.
+final_fit %>% vip( geom ="point", aesthetics = list(size = 5))
+```
+
+Testing model on testing data
+```{r}
+# Final workflow
+final_wf <- workflow() %>%
+  add_recipe(homes_rand_rec) %>%
+  add_model(final_random_forest)
+
+final_results <- final_wf %>%
+  last_fit(homes_split)
+
+# Collecting metrics from testing data.
+final_results %>% collect_metrics()
+
+# Collecting predictions
+
+final_results %>% collect_predictions() %>% select(.pred, price) %>%
+  
+  ggplot(aes(.pred, price)) +
+  geom_point(color = "red", alpha = .5)
+```
+
+
+
+```{r}
+final_results %>% collect_predictions() %>% select(.pred, price) %>% mutate(diffrence = abs(price -.pred)) %>% 
+  ggplot(aes(.pred, price, color = diffrence < .5)) +
+  geom_point( alpha = .5)
+```
+
+```{r}
+final_results %>% collect_predictions() %>% select(.pred, price) %>% mutate(diffrence = abs(price - .pred)) %>% arrange(diffrence) %>% 
+  ggplot(aes(diffrence))+
+  geom_histogram(bins= 100)+
+  labs(title = "Predictions wi")
+```
+
+#########
+```{r}
+test_rand_rec <- recipe(price ~ . , data = homes_testing) %>%
+  step_corr(all_numeric()) %>%
+  step_dummy(all_nominal()) %>%
+  step_zv(all_numeric()) %>%
+
+  prep()
+```
+
+```{r}
+rand_forest_spec_test <-
+  rand_forest(mtry = 5,
+              trees = 1606,
+              min_n = 2) %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
+```
+
+```{r}
+test_fit <- rand_forest_spec_test %>% fit(price~.,juice(test_rand_rec))
+```
+
+```{r}
+test_fit_metrics <- test_fit %>% 
+  predict(juice(test_rand_rec)) %>% 
+  mutate(truth = homes_testing$price) %>% rsq(truth,.pred) %>% 
+  bind_rows(test_fit %>% 
+  predict(juice(test_rand_rec)) %>% 
+  mutate(truth = homes_testing$price) %>% rmse(truth,.pred))
+test_fit_results <- test_fit %>% 
+  predict(juice(test_rand_rec))
+```
+
+```{r}
+homes_testing %>% select(price) %>% bind_cols(test_fit_results) %>% 
+  ggplot(aes(price, .pred , color = abs(price - .pred) <=100000))+
+  geom_point()+
+  scale_x_continuous(labels = dollar_format(prefix = " PLN"))+
+  scale_y_continuous(labels = dollar_format(prefix = " PLN"))+
+  theme_minimal()+
+  labs(
+    title = "Prices corectly predicted with 100000 PLN accuracy.",
+    x = "Price",
+    y = "Prediction",
+    color = " Correct prediction with +/- 100000 acccuracy."
+  )
+
+```
+
