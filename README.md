@@ -1,0 +1,1 @@
+# modeling_polish_property
